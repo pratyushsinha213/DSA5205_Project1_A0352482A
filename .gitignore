@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+# course data and generated artefacts are not versioned
+data/raw/*.csv
+data/processed/*
+outputs/figures/*
+outputs/tables/*
+outputs/predictions/*
+outputs/logs/*
+!**/.gitkeep
+outputs_smoke/
+outputs_demo/
