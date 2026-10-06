@@ -1,0 +1,55 @@
+# Master configuration for DSA5205 Project 1.
+# Every value actually used in a run is copied to outputs/logs/config_used.yaml.
+seed: 5205                      # master seed; all child RNGs derive from it
+n_jobs: -1                      # joblib workers over Monte Carlo replications (-1 = all cores, 1 = serial)
+
+paths:                          # relative to the repository root
+  raw_data: data/raw
+  outputs: outputs
+
+simulation:
+  T_train: 300
+  T_test: 2000
+  c_true: 10.0                  # c = P / T_train  ->  P = 3000
+  b_star: 0.2                   # ||beta*||^2
+  noise_std: 1.0
+  n_replications: 50
+
+task1:
+  cq_grid: [0.5, 0.75, 0.9, 0.95, 0.98, 1.02, 1.05, 1.1, 1.25, 1.5, 2, 3, 5, 7, 10]
+  z_grid: [0, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100]
+  validation_fraction: 0.25     # chronological hold-out used to pick z (training data only)
+
+task2:
+  n_replications: 50            # uses the FIRST n replications of Task 1 (identical data)
+  alpha_grid: [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0]
+  l1_ratio_grid: [0.25, 0.5, 0.75, 1.0]   # 1.0 == Lasso
+  validation_fraction: 0.25     # same split as Task 1's ridge validation
+  max_iter: 5000
+  tol: 1.0e-4
+  scale_features: true          # divide by TRAIN std (no centring: DGP is zero-mean, no intercept)
+
+task3:
+  student_id: YOUR_ID           # overridden by --student-id
+  n_folds: 5                    # expanding-window forward validation folds
+  selection_metric: r2_paper    # r2_paper | sharpe_paper | timing_return
+  fit_intercept: true
+  z_grid: [0, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 1000]
+  alpha_grid: [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0]
+  l1_ratio_grid: [0.25, 0.5, 0.75]
+  pca_components: [5, 10, 20, 50]
+  max_iter: 10000
+
+task4:                          # stylised finance illustration of learning-vs-overfitting timescales
+  enabled: true                 # NOTE: values below were chosen after a 2-seed pilot scan (see README, "Task 4")
+  d: 20                         # input dimension
+  n_train: 600
+  n_val: 2000
+  n_test: 5000
+  width: 100                    # hidden units m
+  signal_scale: 2.0             # phi(x) = tanh(signal_scale * u'x)
+  noise_std: 1.5                # low signal-to-noise ratio (max attainable R2 ~ 0.2)
+  lr: 0.5                       # mean-field time scaling (step size is multiplied by m internally)
+  epochs: 2000
+  log_every: 10
+  n_seeds: 10

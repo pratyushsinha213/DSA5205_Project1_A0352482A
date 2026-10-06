@@ -1,0 +1,40 @@
+# Tiny configuration used by the pytest smoke test and for quick sanity runs.
+seed: 5205
+n_jobs: 1
+paths: {raw_data: data/raw, outputs: outputs}
+simulation: {T_train: 40, T_test: 200, c_true: 10.0, b_star: 0.2, noise_std: 1.0, n_replications: 3}
+task1:
+  cq_grid: [0.5, 0.9, 1.1, 2, 5, 10]
+  z_grid: [0, 0.5, 5, 50]
+  validation_fraction: 0.25
+task2:
+  n_replications: 2
+  alpha_grid: [0.001, 0.01, 0.1, 1.0]
+  l1_ratio_grid: [0.5, 1.0]
+  validation_fraction: 0.25
+  max_iter: 2000
+  tol: 1.0e-3
+  scale_features: true
+task3:
+  student_id: SMOKE
+  n_folds: 3
+  selection_metric: r2_paper
+  fit_intercept: true
+  z_grid: [0, 1, 10, 100]
+  alpha_grid: [0.01, 0.1]
+  l1_ratio_grid: [0.5]
+  pca_components: [3]
+  max_iter: 2000
+task4:
+  enabled: true
+  d: 10
+  n_train: 60
+  n_val: 200
+  n_test: 400
+  width: 20
+  signal_scale: 2.0
+  noise_std: 3.0
+  lr: 0.5
+  epochs: 100
+  log_every: 10
+  n_seeds: 2
