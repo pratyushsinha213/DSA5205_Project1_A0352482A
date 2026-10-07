@@ -1,0 +1,411 @@
+% DSA5205 Project 1 -- report.  Build:  cd report && tectonic report.tex
+% (also compiles with: latexmk -pdf report.tex).  Figures are read from ../outputs/figures/.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,array}
+\usepackage{graphicx,subcaption}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+\urlstyle{tt}
+\makeatletter\g@addto@macro\UrlBreaks{\do\_\do\,\do\<\do\(}\makeatother
+\graphicspath{{../outputs/figures/}}
+\setlist{nosep,leftmargin=*}
+\setlength{\parskip}{3pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+
+% ----------------------------------------------------------------- personal details (EDIT)
+\newcommand{\StudentName}{PRATYUSH SINHA}
+\newcommand{\StudentEmail}{pratyush.sinha@u.nus.edu}
+\newcommand{\StudentID}{A0352482A}
+\newcommand{\VideoLink}{[insert video link or ``MP4 uploaded to Canvas'']}
+% -----------------------------------------------------------------------------------------
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+\newcommand{\code}[1]{\path{#1}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\bh}{\widehat{\beta}}
+\newcommand{\Rpaper}{R^2_{\mathrm{paper}}}
+\newcommand{\SR}{\mathrm{SR}}
+\newcommand{\Ttr}{T_{\mathrm{tr}}}
+\newcommand{\Tte}{T_{\mathrm{te}}}
+
+\begin{document}
+
+% =========================================================================== title page
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\LARGE\bfseries Project 1: Reproducing Key Results in an\\[4pt] ML-in-Finance Study}\\[1.2cm]
+{\Large The Virtue of Complexity in Return Prediction\\[4pt]
+(Kelly, Malamud \& Zhou, 2024) --- Simulation, Alternative Model,\\
+Hidden-Data Prediction, and Generalization in Neural Networks}\\[2cm]
+{\large DSA5205 --- Fall 2026}\\[2cm]
+\begin{tabular}{rl}
+\textbf{Name:} & \StudentName\\
+\textbf{Email:} & \StudentEmail\\
+\textbf{Student ID:} & \StudentID\\
+\textbf{Submission date:} & 8 October 2026\\
+\textbf{Video:} & \VideoLink
+\end{tabular}
+\vfill
+{\small Source code, README and prediction files are in the accompanying package.\\
+All numbers and figures in this report were produced by that code (master seed 5205).}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% =========================================================================== 1
+\section{Overview and main findings}
+This report completes Tasks 1--5 of Project 1. The central question is how model complexity, shrinkage and
+out-of-sample performance interact in return prediction. All simulation results come from a train/test
+experiment: models are fitted on a training sample and evaluated on a separate simulated test sample
+(no population-limit formulas replace finite-sample evaluation). Headline results (Monte-Carlo means over
+50 replications; details and uncertainty in the sections below):
+
+\begin{itemize}
+\item \textbf{Task 1 (ridge, $c=P/\Ttr=10$, partial observability).} Ridgeless regression shows the interpolation
+peak: $\Rpaper$ falls from $-1.0$ at $c_q=0.5$ to $-69$ at $c_q=1.02$ and returns to $-0.08$ at $c_q=10$, with
+$\|\bh\|_2^2$ exploding in the same region. With strong shrinkage ($z=100$) $\Rpaper$ is $\approx 0$ throughout (slightly positive
+for $c_q\ge 2$). The paper Sharpe ratio rises with $c_q$ for every $z$ (e.g.\ $0.0091\to0.0539$ at $z=100$, Spearman rank
+correlation with $c_q$ of $0.996$); shrinkage improves $\Rpaper$ and stabilises $\|\hat\beta\|^2$ everywhere and gives a modest, mostly significant Sharpe gain.
+\item \textbf{Task 2 (Lasso / elastic net, same data).} Hyper-parameters chosen by training-only validation on MSE shrink almost
+everything to zero and give Sharpe ratios of only $0.001$--$0.007$, far below validated ridge ($0.009$--$0.054$).
+An oracle (test-selected) fixed Lasso penalty reaches $0.027$ at $c_q=10$ and also increases with $c_q$, so the
+virtue-of-complexity pattern is not specific to ridge, but sparsity is a poor fit for a dense $\beta^*$.
+\item \textbf{Task 3 (hidden data A/B/C).} Five-fold expanding-window validation selects ridge ($z=5$) for A, Lasso ($\alpha=1$) for B, and PCA-ridge ($k=50,z=50$) for C. A provides the clearest validation evidence of predictability ($\Rpaper=0.0338$, paper Sharpe $=0.186$). B and C have near-zero/negative validation $\Rpaper$, so their selections should be interpreted as the best candidates among those tested rather than evidence of strong predictability. Hidden-test performance is deliberately unknown.
+\item \textbf{Task 4.} A two-layer-network experiment on noisy single-index returns shows a qualitative early-feature-learning/late-overfitting pattern consistent with Montanari--Urbani: early stopping gives test $\Rpaper=0.175$ vs.\ $-0.069$ at the end of training, while the Sharpe ratio
+degrades much less ($0.403\to0.289$).
+\end{itemize}
+
+\textbf{Honesty notes.} (i) Individual Sharpe estimates have standard errors of about $0.003$--$0.004$, so adjacent curve points
+are not separately distinguishable; I therefore also report paired differences on identical data.
+(ii) The grid has no point exactly at $c_q=1$ (it has $0.98$ and $1.02$), so the exact depth of the ridgeless Sharpe dip is not resolved.
+(iii) Task 4 hyper-parameters were tuned after a small pilot (Section~\ref{sec:task4}).
+
+% =========================================================================== 2
+\section{Setup, notation and metrics}
+\subsection{Data-generating process (Tasks 1--2)}
+Signals $S_t\sim\mathcal N(0,I_P)$ ($\Psi=I$) and returns $R_{t+1}=S_t^\top\beta^*+\varepsilon_{t+1}$, $\varepsilon_{t+1}\sim\mathcal N(0,1)$.
+The coefficient vector is dense and isotropic: $g\sim\mathcal N(0,I_P)$, $\beta^*=\sqrt{b^*}\,g/\|g\|_2$, so $\|\beta^*\|_2^2=b^*=0.2$ and
+$\E[R^2]=1+b^*=1.2$. Dimensions: $\Ttr=300$, $\Tte=2000$, true complexity $c=P/\Ttr=10$ so $P=3000$.
+The best possible population $\Rpaper$ (knowing $\beta^*$) is $b^*/(1+b^*)=0.167$; the signal is weak and, with $\Ttr=300$, estimation error dominates.
+
+\subsection{Partial observability protocol}
+Per replication one random permutation of the $P$ columns is drawn \emph{once} and fixed for all $c_q$. For a given $c_q$ the model observes the first
+$P_1=\mathrm{round}(c_q\Ttr)$ permuted columns ($q=P_1/P$), so observed sets are nested. The unobserved block acts as extra noise
+(misspecification). The grid is $c_q\in\{0.5,0.75,0.9,0.95,0.98,1.02,1.05,1.1,1.25,1.5,2,3,5,7,10\}$, i.e.\ $P_1\in\{150,\dots,3000\}$.
+Replication $i$ uses the generator \code{SeedSequence(5205, spawn_key=(0,i))}, so the data do not depend on the number of replications
+requested.
+
+\subsection{Ridge estimator}
+With $X\in\mathbb R^{\Ttr\times P_1}$ and $y\in\mathbb R^{\Ttr}$ (no intercept),
+\begin{equation}\label{eq:ridge}
+\bh(z)=(X^\top X+z\,\Ttr\,I)^{-1}X^\top y=V\,\mathrm{diag}\!\Big(\tfrac{\sigma_i}{\sigma_i^2+z\Ttr}\Big)U^\top y,\qquad X=U\Sigma V^\top .
+\end{equation}
+The right-hand side is evaluated from a thin SVD; $X^\top X$ is never formed or inverted. For $z=0$ the same code applies the Moore--Penrose cut-off, i.e.\
+the OLS solution when $P_1<\Ttr$ and the minimum-norm interpolator when $P_1>\Ttr$ (identical to \code{numpy.linalg.lstsq}).
+The shrinkage grid is $z\in\{0,0.1,0.25,0.5,1,2,5,10,25,50,100\}$.
+The implied optimum in the misspecified case with $\Psi=I$ is $z^*=c\,(1+b^*(1-q))/b^*$ (KMZ Prop.~6(ii), under the small cross-block trace condition),
+which here equals $50$ at $q=1$ and about $59.5$ at $c_q=0.5$ ($q=0.05$): inside the grid.
+
+\subsection{Metrics (second-moment conventions of the paper)}
+On the test sample, with $\widehat R_{t+1}=S_t^\top\bh(z)$ and timing return $R^\pi_{t+1}=\widehat R_{t+1}R_{t+1}$:
+\begin{align}
+\Rpaper&=1-\frac{\mathrm{mean}[(R-\widehat R)^2]}{\mathrm{mean}[R^2]}=\frac{2\,\mathrm{mean}[\widehat R R]-\mathrm{mean}[\widehat R^2]}{\mathrm{mean}[R^2]},\\
+\SR&=\frac{\mathrm{mean}[R^\pi]}{\sqrt{\mathrm{mean}[(R^\pi)^2]}}\ \ \text{(uncentred, KMZ Eq.~(5))},\qquad
+\SR_{\mathrm{var}}=\frac{\mathrm{mean}[R^\pi]}{\mathrm{sd}(R^\pi)},\qquad \|\bh(z)\|_2^2 .
+\end{align}
+Both forms of $\Rpaper$ are computed; they agree to $5.7\times10^{-14}$. Convention: a strategy that never trades (all-zero predictions) has $\SR:=0$ (rather than $0/0$).
+Two facts matter for interpretation (proofs in Appendix~\ref{app:proofs}): $\SR$ is invariant to rescaling of the forecast ($\widehat R\to\lambda\widehat R$), whereas $E[R^\pi]$ and $\Rpaper$ are not.
+
+\subsection{Complete parameter list}
+\begin{table}[h]\centering\small
+\begin{tabular}{@{}p{3.5cm}p{11.8cm}@{}}\toprule
+\textbf{Item} & \textbf{Value (source: \code{configs/default.yaml}, copied to \code{outputs/logs/config_used.yaml})}\\\midrule
+Seeds & master seed 5205; child generators from \code{SeedSequence(entropy, spawn_key=(stream, index))}\\
+Tasks 1--2 DGP & $\Ttr=300$, $\Tte=2000$, $P=3000$ ($c=10$), $b^*=0.2$, noise sd $1$, 50 replications\\
+Task 1 grids & 15 values of $c_q$ (above); 11 values of $z$ (above); validation fraction $0.25$ (chronological hold-out)\\
+Task 2 & $\alpha\in\{10^{-4},3{\cdot}10^{-4},10^{-3},3{\cdot}10^{-3},10^{-2},3{\cdot}10^{-2},0.1,0.3,1\}$; $\ell_1$-ratio $\in\{0.25,0.5,0.75,1\}$ ($1=$ Lasso); \code{max_iter}$=5000$, \code{tol}$=10^{-4}$; same 50 replications, same $c_q$ grid\\
+Task 3 & 5 expanding-window folds; selection metric $\Rpaper$; $z\in\{0,\dots,1000\}$, $\alpha$ grid as above, $\ell_1\in\{0.25,0.5,0.75\}$, PCA $k\in\{5,10,20,50\}$\\
+Task 4 & $d=20$, $n_{\mathrm{train}}=600$, width $m=100$, $\tanh(2u^\top x)$ signal, noise sd $1.5$, step $0.5$, 2000 full-batch epochs, 10 seeds\\
+Software & Python 3.12.3, numpy 2.4.4, pandas 3.0.2, scipy 1.17.1, scikit-learn 1.8.0, matplotlib 3.10.8\\\bottomrule
+\end{tabular}
+\caption{All parameters used in the reported run.}
+\end{table}
+
+% =========================================================================== 3
+\section{Task 1: misspecified simulation with ridge}
+\subsection{What was run and how it was checked}
+For each of 50 replications and each $c_q$ the code computes one SVD of the training design and then all 11 ridge solutions and their test metrics
+(\code{src/task1_ridge.py: evaluate_replication}). Reported numbers are Monte-Carlo means; ``s.e.'' is the standard deviation over replications divided by $\sqrt{50}$.
+Automatic checks (\code{outputs/tables/task1_sanity.csv}) all pass: $\Rpaper$ identity gap $5.7\times10^{-14}$; $|{\rm mean}(R^2)-1.2|=0.0076$ within Monte-Carlo tolerance; $\|\beta^*\|^2=b^*$ to $10^{-16}$;
+SVD ridgeless vs.\ \code{lstsq} relative difference $3.9\times10^{-15}$; SVD ridge ($z=1$) vs.\ the kernel (dual) solve $3.1\times10^{-15}$. Unit tests also match \code{sklearn.Ridge(alpha=zT)}.
+
+\begin{figure}[t]\centering
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task1_r2_vs_cq.png}\caption{$\Rpaper$ (symlog axis)}\end{subfigure}
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task1_timing_return_vs_cq.png}\caption{$E[R^\pi]$}\end{subfigure}\\[2pt]
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task1_sharpe_vs_cq.png}\caption{Sharpe $E[R^\pi]/\sqrt{E[(R^\pi)^2]}$}\end{subfigure}
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task1_beta_norm_vs_cq.png}\caption{$\|\bh(z)\|_2^2$ (log axis)}\end{subfigure}
+\caption[Caption]{Task 1: out-of-sample metrics versus observed complexity $c_q$ for each $z$ (mean of 50 replications; bands $\pm1$ s.e.; dashed line $c_q=1$).
+Produced by \code{plotting.plot_metric_vs_cq} from \code{outputs/tables/task1_summary.csv}.}\label{fig:t1}
+\end{figure}
+
+\begin{table}[t]\centering\small
+\begin{tabular}{@{}r rrr rr rrr r@{}}\toprule
+ & \multicolumn{3}{c}{ridgeless $z=0$} & \multicolumn{2}{c}{$z=1$} & \multicolumn{2}{c}{$z=100$} & validated $z$\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(l){9-9}
+$c_q$ & $\Rpaper$ & SR & $\|\bh\|^2$ & $\Rpaper$ & SR & $\Rpaper$ & SR & SR\\\midrule
+0.5  & $-1.000$ & 0.0087 & 1.23 & $-0.102$ & 0.0098 & $0.0001$ & 0.0091 & 0.0093\\
+0.9  & $-9.05$ & 0.0093 & 11.0 & $-0.150$ & 0.0162 & $0.0002$ & 0.0165 & 0.0167\\
+0.98 & $-48.6$ & 0.0096 & 58.3 & $-0.156$ & 0.0164 & $0.0002$ & 0.0166 & 0.0169\\
+1.02 & $-69.4$ & 0.0048 & 83.7 & $-0.158$ & 0.0178 & $0.0002$ & 0.0173 & 0.0177\\
+1.1  & $-10.2$ & 0.0106 & 12.4 & $-0.163$ & 0.0185 & $0.0003$ & 0.0178 & 0.0185\\
+2    & $-0.954$ & 0.0198 & 1.22 & $-0.181$ & 0.0249 & $0.0005$ & 0.0253 & 0.0254\\
+5    & $-0.212$ & 0.0343 & 0.298 & $-0.120$ & 0.0362 & $0.0013$ & 0.0405 & 0.0399\\
+10   & $-0.076$ & 0.0498 & 0.132 & $-0.057$ & 0.0505 & $0.0023$ & 0.0539 & 0.0535\\\bottomrule
+\end{tabular}
+\caption[Caption]{Selected Task 1 results (means over 50 replications; Sharpe s.e.\ $\approx0.003$--$0.004$ at every row; $\Rpaper$ s.e.\ from $10^{-4}$ to $7$ as the mean magnitude grows).
+``Validated $z$'': $z$ chosen on the last 25\% of the \emph{training} sample (median selected $z$: 75--100 for $c_q\le2$, 50 for $c_q\ge3$).
+Full table: \code{outputs/tables/task1_summary.csv}.}\label{tab:t1}
+\end{table}
+
+\subsection{Results and interpretation}
+\textbf{Interpolation peak (ridgeless).} Figures~\ref{fig:t1}(a,d) and Table~\ref{tab:t1} show the double-descent signature: $\|\bh(0)\|_2^2$ grows from $1.2$ ($c_q=0.5$) to $84$ ($c_q=1.02$) and falls back to $0.13$ at $c_q=10$,
+and $\Rpaper$ mirrors it ($-1.0\to-69\to-0.08$). This is the finite-sample counterpart of the exploding variance near $P_1\approx\Ttr$ in KMZ Prop.~3. $\Rpaper$ is negative for every $z\le10$ and $\approx0$ or slightly positive only for $z\ge25$:
+the signal is weak, so without strong shrinkage predictions add more noise than information.
+
+\textbf{Timing return versus Sharpe.} $E[R^\pi]$ for $z=0$ spikes to $0.070$ at $c_q=0.98$ (Fig.~\ref{fig:t1}b, Fig.~\ref{fig:zoom}) because the forecast is huge, but the variance of $R^\pi$ explodes with it: the Sharpe ratio is flat ($\approx0.009$) up to $c_q=0.98$ and then dips to $0.0048$ at $c_q=1.02$.
+Because the grid has no point at exactly $c_q=1$ the full depth of the Sharpe dip (predicted to approach $0$ in the limit) is not resolved here; the dip I observe is on one side only.
+
+\textbf{Virtue of complexity.} The Sharpe ratio increases with $c_q$ for every $z$ (Fig.~\ref{fig:t1}c). For $z=100$ it goes from $0.0091$ to $0.0539$ (rank correlation with $c_q$: $0.996$).
+Because the per-point s.e.\ is $\approx0.0035$, I also checked paired differences on the same replications: $\SR(c_q{=}10)-\SR(c_q{=}0.5)=+0.0410$ (s.e.\ $0.0045$, 90\% of replications positive) for $z=0$ and $+0.0448$ (s.e.\ $0.0047$, 88\% positive) for $z=100$.
+Observing more of the true signal helps even though the model has far more parameters than observations; this is consistent with KMZ Theorem 1 once shrinkage is applied.
+
+\textbf{Role of shrinkage.} Paired on identical data, the Sharpe gain $\SR(z{=}100)-\SR(z{=}0)$ is $+0.0125$ (s.e.\ $0.0050$) at $c_q=1.02$, $+0.0069$ and $+0.0072$ (s.e.\ $\approx0.005$) at $0.98$ and $1.1$ --- suggestive near the threshold, where the noise is largest ---
+$+0.0025$ (s.e.\ $0.0019$) at $c_q=3$, and $+0.0062$, $+0.0061$, $+0.0042$ (s.e.\ $0.0010$--$0.0013$, i.e.\ clearly positive) at $c_q=5,7,10$.
+So shrinkage never hurt on average, but the Sharpe gain is modest (about $10$--$25\%$ of the level at high $c_q$) and the dramatic benefit of shrinkage is visible in $\Rpaper$ and $\|\bh\|^2$ rather than in $\SR$.
+The validated-$z$ curve (Fig.~\ref{fig:val}, last column of Table~\ref{tab:t1}) lies within $0.0006$ of the oracle best fixed $z$ at every $c_q$ (and is chosen without looking at test data).
+
+\textbf{$z$ and the theory.} The Sharpe-maximising fixed $z$ (Fig.~\ref{fig:best}) is between $0.5$ and $5$ for $c_q\le2$, $10$ at $c_q=3$ and the grid edge ($100$) for $c_q\ge5$ (neighbouring $z$ values differ by less than one s.e., so this selection is noisy). This is not in conflict with $z^*\approx50$--$60$: $z^*$ is the optimum for the \emph{forecast error} $\Rpaper$, while $\SR$ is scale-invariant (Appendix~\ref{app:proofs}) and as $z\to\infty$ the ridge direction tends to $X^\top y$, which keeps the correct sign information but not its scale.
+Consistently, $\SR$ keeps (weakly) improving with $z$ over a wide range, and its optimum lies at larger $z$ than $z^*$. In my simulation $\Rpaper$ at $z=100$ is only $0.0002$--$0.0023$: positive but economically tiny, as expected for $T=300$.
+
+\textbf{Limitations.} Finite $T$ and $\Tte=2000$ make all metrics noisy; 50 replications leave s.e.\ of order $0.003$ on $\SR$; the $z$ grid is capped at $100$; the population limit lines of KMZ are not overlaid (no theory curves are drawn).
+
+\begin{figure}[t]\centering
+\includegraphics[width=0.93\linewidth]{task1_zoom_near_interpolation.png}
+\caption[Caption]{Zoom on $c_q\in[0.75,1.5]$ (\code{plotting.plot_zoom}). The ridgeless curve (darkest) is the only one with a pronounced peak/dip at the interpolation threshold.}\label{fig:zoom}
+\end{figure}
+\begin{figure}[t]\centering
+\begin{subfigure}{0.62\textwidth}\includegraphics[width=\linewidth]{task1_ridgeless_vs_validated.png}\caption{Ridgeless vs.\ validated ridge}\label{fig:val}\end{subfigure}
+\begin{subfigure}{0.36\textwidth}\includegraphics[width=\linewidth]{task1_best_z_envelope.png}\caption{Best fixed $z$ (oracle, test-selected)}\label{fig:best}\end{subfigure}
+\caption{Left: ridgeless versus ridge with $z$ selected on the training sample only. Right: oracle envelope --- the $z$ maximising mean Sharpe on the test means; a diagnostic, not a tradable rule.}
+\end{figure}
+
+% =========================================================================== 4
+\section{Task 2: Lasso and elastic net on the same data}
+\subsection{Model, tuning and fairness}
+\textbf{Model.} Lasso/elastic net, \code{minimise}\ $\frac1{2n}\|y-Xw\|_2^2+\alpha\big(\rho\|w\|_1+\tfrac{1-\rho}{2}\|w\|_2^2\big)$ with $\rho=1$ being the Lasso. The Lasso is the natural alternative to ridge in this problem because it
+\emph{imposes sparsity} and therefore directly tests how essential dense, ridge-style shrinkage is for the dense $\beta^*$ of this DGP.
+\textbf{Same data.} The simulations are regenerated from the same seeds; Task 1 stores a SHA-256 fingerprint of each replication's $(S_{\rm train},y_{\rm train},S_{\rm test},y_{\rm test},\beta^*,\text{permutation})$ and Task 2 \emph{aborts} if any differs: all 50 fingerprints matched.
+Same split, same permutation prefix per $c_q$, same grid, same metrics.
+\textbf{Tuning.} $(\alpha,\rho)$ are chosen on the same chronological hold-out of the training sample as for the validated ridge (validation MSE; warm-started coefficient paths); the model is then refitted on all training rows.
+Features are divided by their training standard deviation (no centring, no intercept, matching the zero-mean DGP and the ridge benchmark); coefficients are mapped back to original units before $\|\bh\|^2$ and predictions are computed.
+Besides the validated choice, \emph{every} $(\rho,\alpha)$ on the grid is evaluated on the test sample (``fixed-$\alpha$ sweep'') to show behaviour that validation hides.
+
+\begin{figure}[t]\centering
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task2_ridge_vs_alternative_r2.png}\caption{$\Rpaper$}\end{subfigure}
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task2_ridge_vs_alternative_timing_return.png}\caption{$E[R^\pi]$}\end{subfigure}\\[2pt]
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task2_ridge_vs_alternative_sharpe.png}\caption{Sharpe}\end{subfigure}
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task2_ridge_vs_alternative_beta_norm.png}\caption{$\|\bh\|_2^2$}\end{subfigure}
+\caption[Caption]{Task 2: validated Lasso and elastic net versus ridge (ridgeless and validated), same data and grid ($\pm1$ s.e.). \code{plotting.plot_ridge_vs_alternative}.}\label{fig:t2}
+\end{figure}
+
+\begin{table}[t]\centering\small
+\begin{tabular}{@{}r rr rr rr rr@{}}\toprule
+ & \multicolumn{2}{c}{ridge, validated} & \multicolumn{2}{c}{Lasso, validated} & \multicolumn{2}{c}{elastic net, valid.} & \multicolumn{2}{c}{Lasso $\alpha=0.01$ (oracle)}\\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(l){8-9}
+$c_q$ ($P_1$) & SR & nnz & SR & nnz & SR & nnz & SR & nnz\\\midrule
+0.5 (150)   & 0.0093 & 150  & 0.0021 & 4.6  & 0.0044 & 7.1  & 0.0093 & 125\\
+1.02 (306)  & 0.0177 & 306  & 0.0015 & 5.3  & 0.0033 & 7.7  & 0.0157 & 216\\
+2 (600)     & 0.0254 & 600  & 0.0011 & 4.8  & 0.0041 & 8.9  & 0.0176 & 257\\
+5 (1500)    & 0.0399 & 1500 & 0.0012 & 5.6  & 0.0062 & 4.5  & 0.0234 & 273\\
+10 (3000)   & 0.0535 & 3000 & 0.0027 & 13.7 & 0.0064 & 16.9 & 0.0266 & 278\\\bottomrule
+\end{tabular}
+\caption[Caption]{Task 2 summary (means over 50 replications; nnz = number of non-zero coefficients; s.e.\ of SR $\approx0.001$--$0.002$ for validated Lasso/EN and $\approx0.003$--$0.004$ otherwise).
+Validated $\Rpaper$ for Lasso/EN lies in $[-0.012,-0.003]$ for all $c_q$. Full tables: \code{task2_summary.csv}, \code{task2_fixed_alpha_summary.csv}.}\label{tab:t2}
+\end{table}
+
+\begin{figure}[t]\centering
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task2_lasso_fixed_alpha_sharpe_vs_cq.png}\caption{Lasso, fixed $\alpha$: Sharpe}\end{subfigure}
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{task2_lasso_fixed_alpha_r2_vs_cq.png}\caption{Lasso, fixed $\alpha$: $\Rpaper$}\end{subfigure}
+\caption{Fixed-$\alpha$ Lasso sweep (no tuning; test metrics for each grid value). Small $\alpha$ reproduces the ridgeless pathology; $\alpha\ge0.3$ gives the all-zero predictor.}\label{fig:t2b}
+\end{figure}
+
+\subsection{Findings and where/why they deviate from ridge}
+\begin{enumerate}
+\item \textbf{Validated sparse models essentially do not trade.} The validation MSE (75 rows) almost always favours heavy shrinkage: the median selected $\alpha$ is $1.0$ (the largest grid value, where all coefficients are $0$) for Lasso at every $c_q$, and only about $4$--$14$ coefficients are non-zero on average (Table~\ref{tab:t2}).
+The zero predictor is hard to beat on MSE with a signal of $b^*=0.2$ spread over $3000$ coordinates, but it is a poor \emph{timing} strategy: validated Lasso/EN Sharpe stays at $0.001$--$0.007$ versus $0.009$--$0.054$ for validated ridge.
+\item \textbf{The selection criterion matters.} $\SR$ is invariant to forecast scale whereas validation MSE is not, so MSE-based tuning prefers shrinkage far stronger than what is best for Sharpe. This is the same mechanism as in Task 1, where the best $z$ for Sharpe exceeds $z^*$.
+The oracle fixed-$\alpha$ Lasso ($\alpha\in[0.01,0.03]$; test-selected, so optimistic) reaches $\SR=0.027$ at $c_q=10$ with $\approx280$ non-zeros, about half of ridge ($0.054$), and it too \emph{increases} with $c_q$ ($0.009\to0.027$): the virtue-of-complexity pattern is not tied to $\ell_2$ shrinkage.
+\item \textbf{Sparsity is a mismatch for a dense signal.} A dense $\beta^*$ has no small set of dominant coordinates; the Lasso keeps a few noisy coordinates and discards many weak true ones. Its $\|\bh\|_2^2$ is bounded ($0.007$--$0.015$ for the validated version) and shows no interpolation peak, because heavy $\ell_1$ shrinkage prevents interpolation.
+\item \textbf{Implicit shrinkage near interpolation.} At very small $\alpha$ the Lasso/elastic net is nearly unregularised: $\Rpaper=-0.99$ at $c_q=0.5$ matches ridgeless ($-1.00$), but at $c_q=1.02$ it is $-28$ (at $\alpha=10^{-4}$) versus $-69$ for ridgeless --- the $\ell_1$ solution (with partly un-converged coordinate descent, see below) is somewhat more stable than the minimum-$\ell_2$-norm interpolator.
+\item \textbf{Caveats.} For $\alpha\le10^{-3}$ coordinate descent with \code{tol}$=10^{-4}$ and \code{max_iter}$=5000$ may stop before full convergence (warnings were suppressed), so those fits behave partly like early-stopped solutions. The $\alpha$ grid is capped at $1$ and its upper part already collapses to zero. The elastic net selected $\rho\approx0.25$--$0.5$ most often. Nonlinear models were not tried.
+\end{enumerate}
+
+\begin{figure}[t]\centering
+\includegraphics[width=0.52\linewidth]{task2_sparsity_vs_cq.png}
+\caption{Number of non-zero coefficients (validated Lasso/EN) versus the number of observed features $P_1$ (dotted).}
+\end{figure}
+
+% =========================================================================== 5
+\section{Task 3: prediction on datasets A, B, C}\label{sec:task3}
+\subsection{Methodology and model-selection reasoning}
+The hidden-test labels cannot be used for model selection, so I treat Task 3 as a genuine out-of-sample forecasting problem. I use only the public training sample for diagnostics and model selection, then refit the selected specification on the full training sample and generate predictions for the public test features. The final hidden-test $\Rpaper$, $E[R^\pi]$, SR and $\SR_{\rm var}$ are therefore not known at submission time.
+
+The pipeline first enforces strict feature alignment (\code{src/data.py}): the test file must contain exactly the training feature names, features are reordered to the training order, $t$ must be unique and strictly increasing, and NaN/non-finite values are rejected. I then compute training-only diagnostics: $c=P/T$, return moments and lag-1 autocorrelation, effective rank, and the share of features whose absolute marginal correlation with returns exceeds $2/\sqrt{T}$. These diagnostics do not reveal the DGP, but they indicate the dimensionality regime and whether aggressive regularisation or dimension reduction is likely to be necessary.
+
+I compare four model families: ridge, Lasso, elastic net, and PCA followed by ridge. Hyperparameters are selected using five expanding-window folds, so every validation block occurs after its corresponding training block. Standardisation, PCA and model fitting are repeated inside each fold to avoid leakage. The selection criterion is mean validation $\Rpaper$, matching the project's primary prediction metric; timing return, paper Sharpe and variance-based Sharpe are recorded as secondary diagnostics. This procedure deliberately allows different datasets to select different inductive biases rather than assuming that the model that worked in Tasks 1--2 must also be optimal for an unknown DGP.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{@{}l ccc@{}}\toprule
+ & A & B & C\\\midrule
+$T_{\rm tr}$ & 600 & 240 & 360\\
+$P$ & 600 & 2400 & 1800\\
+$c=P/T_{\rm tr}$ & 1.0 & 10.0 & 5.0\\
+Effective rank & 300.3 & 217.4 & 299.5\\
+Share $|\mathrm{corr}|>2/\sqrt{T}$ & 0.080 & 0.049 & 0.052\\
+Selected model & Ridge & Lasso & PCA-ridge\\
+Hyperparameters & $z=5$ & $\alpha=1$ & $k=50,\ z=50$\\
+Validation $\Rpaper$ & $0.0338$ & $-0.00973$ & $-0.000381$\\
+Validation $E[R^\pi]$ & $0.0522$ & $0.00124$ & $0.00295$\\
+Validation paper SR & $0.186$ & $0.0286$ & $0.0399$\\
+Validation $\SR_{\rm var}$ & $0.194$ & $0.0297$ & $0.0410$\\\bottomrule
+\end{tabular}
+\caption[Task 3 training diagnostics and selected models]{Task 3 training diagnostics and selected models. Performance entries are means across five internal expanding-window validation folds, not hidden-test results. Source: \texttt{task3\_selected\_models.csv}.}\label{tab:t3}
+\end{table}
+
+\subsection{Dataset-specific interpretation}
+\textbf{Dataset A.} Here $P=T=600$, placing the problem at the interpolation boundary where unregularised least squares is particularly unstable. The share of marginal correlations beyond the $2/\sqrt{T}$ threshold is $8\%$, above the roughly $5\%$ noise reference, and ridge with $z=5$ achieves the best validation $\Rpaper=0.0338$. Its paper Sharpe is $0.186$. I therefore choose ridge because A provides evidence of a weak but distributed predictive signal for which continuous $\ell_2$ shrinkage is preferable to aggressive variable selection. The result is also consistent with Task 1: regularisation is especially valuable near $c=1$.
+
+\textbf{Dataset B.} This is the most underdetermined problem, with $P/T=10$. Only $4.9\%$ of features exceed the marginal-correlation threshold, approximately the pure-noise reference rate. Lasso with $\alpha=1$ ranks first by validation $\Rpaper$, but its value is still negative ($-0.00973$), and the code correctly warns that no candidate beats the zero predictor. I therefore interpret the selection conservatively: the training data provide little robust evidence of exploitable signal under the candidate set. Lasso is used because validation prefers strong sparsity in this extremely high-dimensional sample, not because I can establish that the unknown true $\beta^*$ is sparse. Its small positive validation Sharpe ($0.0286$) also illustrates that economic and squared-error criteria need not rank a weak signal identically.
+
+\textbf{Dataset C.} Here $P/T=5$ and the marginal-correlation share is $5.2\%$, again close to the noise benchmark. PCA-ridge with 50 components and $z=50$ gives the highest validation $\Rpaper$, but at $-0.000381$ it is essentially zero and does not beat the zero predictor. The choice therefore reflects stability rather than strong evidence of predictability: dimension reduction compresses 1800 raw features to a lower-dimensional representation and ridge controls the remaining estimation variance. I regard the apparent low-dimensional structure as suggestive rather than established because nearby ridge/PCA-ridge specifications have very similar validation performance.
+
+\subsection{What can and cannot be concluded}
+A is the only dataset for which the selected model produces clearly positive mean validation $\Rpaper$. For B and C, model selection is necessarily fragile because the best validation values are approximately zero or negative and fold-to-fold Sharpe variation is large. I therefore do not claim hidden-test success for any dataset. The defensible conclusion is methodological: the unknown datasets favour different forms of regularisation, and internal chronological validation provides a principled way to choose among them without using hidden labels. The prediction files were written and revalidated with exactly the required \code{t,yhat} schema and test-row ordering.
+
+% =========================================================================== 6
+\section{Task 4: generalization and overfitting in two-layer networks}\label{sec:task4}
+\subsection{The paper in brief}
+Montanari and Urbani (NeurIPS 2025) study large two-layer networks with $m$ hidden units trained by gradient methods on $n$ samples in dimension $d$, using dynamical mean-field theory (DMFT).
+Their key discovery is that, for large width $m$ and large $n/d$, the dynamics has a \emph{separation of timescales}, which implies (in their words, abstract): (i)~a slow timescale associated with the growth of the network's Gaussian/Rademacher complexity; (ii)~an inductive bias towards low complexity when the initialisation has low enough complexity;
+(iii)~a \emph{dynamical decoupling} between a feature-learning regime and an overfitting regime; (iv)~non-monotone test error with a late `feature unlearning' regime. In plain terms: early in training, the network quickly learns the low-dimensional structure that generalises; only on a much slower timescale does its complexity grow
+and it begins to fit noise, so that generalisation and overfitting cannot be separated from the \emph{training time} at which one stops. Large capacity per se is not harmful; harm comes from training too long.
+\emph{Scope note:} this summary relies on the paper's abstract and introduction; I did not reproduce or re-derive the DMFT analysis (the task does not require it).
+
+\subsection{Financial question and link to Tasks 1--2}
+\textbf{Question:} In a low signal-to-noise return-prediction problem, does training time act as the complexity control that ridge shrinkage $z$ plays in Task 1, and how do forecast accuracy ($\Rpaper$) and trading performance (Sharpe) behave when a high-capacity network is trained to (near-)interpolation?
+Motivation: KMZ show that high complexity can help if shrinkage is right; Montanari--Urbani suggest that for networks the analogue of shrinkage is implicit, set by when training is stopped. (For linear least squares, early stopping of gradient descent is well known to behave like ridge with a penalty decreasing in training time.)
+
+\subsection{Experiment (simulated, one idea)}
+Returns $R_{t+1}=\tanh(2\,u^\top x_t)+\varepsilon_{t+1}$ with $x_t\sim\mathcal N(0,I_{20})$, unit vector $u$, $\varepsilon\sim\mathcal N(0,1.5^2)$. The signal variance is $0.635$ and $\E[R^2]=2.885$, so the best attainable $\Rpaper$ is $0.635/2.885=0.220$ (low SNR, comparable in spirit to return data).
+Network $f(x)=\frac1m\sum_{j=1}^m a_j\tanh(w_j^\top x/\sqrt d)$ with $m=100$ trained by full-batch gradient descent on the squared loss in the mean-field time scaling ($n_{\rm train}=600$; $2000$ epochs; 10 seeds; NumPy implementation, \code{src/task4_nn_dynamics.py}). I track train/validation/test MSE, test $\Rpaper$ and paper-Sharpe of the timing strategy $\pi=f(x)$,
+a complexity proxy $(\|a\|^2+\|W\|_F^2)/m$ and the weight mass along $u$ versus orthogonal directions. The early-stopping epoch is chosen from a separate \emph{validation} set (test labels never used).
+
+\begin{figure}[t]\centering
+\includegraphics[width=\linewidth]{task4_training_dynamics.png}
+\caption[Caption]{Task 4: training dynamics (mean of 10 seeds, $\pm1$ s.e.; dashed: median early-stopping epoch). \code{plotting.plot_training_dynamics} from \code{task4_training_curves.csv}.}\label{fig:t4}
+\end{figure}
+
+\begin{table}[t]\centering\footnotesize
+\begin{tabular}{@{}l rrrrrr@{}}\toprule
+Stopping rule & epoch & train MSE & test MSE & test $\Rpaper$ & test SR & complexity\\\midrule
+Validation early stop & $59\pm7$ & 2.209 & 2.390 & $0.175\pm0.005$ & $0.403\pm0.005$ & $30.1$\\
+Final epoch (2000) & 2000 & 0.0002 & 3.098 & $-0.069\pm0.008$ & $0.289\pm0.008$ & $560.8$\\\bottomrule
+\end{tabular}
+\caption{Early stopping versus training to interpolation (mean $\pm$ s.e.\ over 10 seeds; early-stop epochs range from 30 to 90).}\label{tab:t4}
+\end{table}
+
+\textbf{Results.} (1)~Test error is non-monotone: test $\Rpaper$ peaks around epoch $60$ at $0.176$ (about $80\%$ of the attainable $0.220$) and falls to $-0.069$ by epoch $2000$ (Fig.~\ref{fig:t4}, Table~\ref{tab:t4}).
+(2)~The training error goes to $\approx0$ only \emph{after} the test optimum, and the complexity proxy grows $\approx19$-fold ($30\to561$) mainly after epoch $\sim200$: a slow growth of complexity separated from the early learning phase, as in the paper.
+(3)~The weight mass along $u$ grows first ($1.04\to5.35$ by epoch 60, vs.\ $0.98\to0.95$ in orthogonal directions), i.e.\ the network learns the relevant feature early; later both grow (at epoch 2000: $27.9$ along $u$, $11.8$ per orthogonal direction), i.e.\ complexity is spent on noise directions.
+\textbf{Caution:} the signal-direction weight does \emph{not} decrease in my run, so I do not claim to observe literal ``feature unlearning''; what I observe is the decoupling of an early feature-learning phase from a late overfitting phase with non-monotone test error.
+\textbf{Disclosure:} my first parameter guess ($d=40$, $n=400$, noise $3$) was too noisy to learn anything before overfitting; the reported setting was chosen after a 2-seed pilot scan over noise level, sample size and step size, and a pilot with step $0.1$ showed much milder late overfitting.
+The severity of late overfitting therefore depends on the step size, noise and sample size, and this experiment is an illustration, not proof.
+
+\subsection{Implications for financial machine learning}
+\begin{itemize}
+\item \textbf{Training time is a regularisation parameter and must be validated like $z$.} A high-capacity network need not be penalised for its size (cf.\ the virtue of complexity), but it must be stopped appropriately; selecting the stopping epoch on a chronological validation block is the analogue of the validated $z$ in Task 1. In the experiment the optimal epoch varies across seeds ($30$--$90$), so a single noisy validation split is itself a source of variance --- averaging over several blocks or seeds is advisable.
+\item \textbf{$\Rpaper$ and Sharpe can disagree (independent insight, links Tasks 1 and 4).} At the final epoch test $\Rpaper$ is negative while the Sharpe ratio stays high ($0.289$, $72\%$ of its early-stopping value $0.403$), exactly as in Task 1 where ridgeless forecasts have hugely negative $\Rpaper$ but positive Sharpe. This is because $\SR$ is scale-invariant while MSE is not (Appendix~\ref{app:proofs}).
+Hence a model judged ``overfit'' by forecast error may still carry usable directional information, and conversely early stopping/ shrinkage is primarily a \emph{scale/variance} control. A practitioner should evaluate both forecast loss and the strategy metric and, since leverage can rescale forecasts, treat the scale as a separate decision.
+Caveat: transaction costs and capacity constraints penalise the very large positions implied by exploding forecasts, which Sharpe ignores.
+\item \textbf{Why real markets are harder.} The theory is for i.i.d.\ Gaussian inputs, large width and a stationary teacher; financial returns are heavy-tailed, serially dependent, non-stationary, with signal-to-noise ratios far lower than my $\Rpaper$ ceiling of $0.22$, and the number of independent samples is small. In non-stationary data the ``feature'' learned early may decay, so the optimal stopping epoch can drift and a fixed rule may fail out of sample. Training with SGD, mini-batches, different initialisations or deeper nets may change the timescales.
+\item \textbf{Proposed next experiment (not implemented).} Replace the single-index teacher by the Task 1 DGP with partial observability and train a width-$m$ network; vary $c_q$ and stopping time, and test whether validated early stopping reproduces the increasing-Sharpe-in-$c_q$ pattern; then repeat on a rolling-window real data set with chronological validation.
+\end{itemize}
+
+% =========================================================================== overall conclusion
+\section{Overall conclusion}
+The four empirical tasks point to one common conclusion: \textbf{complexity is not inherently harmful; uncontrolled or mismatched complexity is}. In Task 1, ridgeless regression becomes unstable at the interpolation threshold: $\|\hat\beta\|_2^2$ explodes and $\Rpaper$ becomes extremely negative. Moving beyond interpolation produces a second-descent recovery, while ridge regularisation suppresses the instability. Most importantly for the KMZ hypothesis, the validation-selected ridge timing Sharpe rises from about $0.009$ at $c_q=0.5$ to $0.054$ at $c_q=10$. Thus, in the dense, sufficiently mixed and misspecified DGP, observing more signals improves economic performance when estimation variance is controlled.
+
+Task 2 shows that this conclusion depends on the estimator's inductive bias. Lasso and elastic net impose sparsity on a DGP in which predictive strength is deliberately distributed across many coordinates. Validation therefore retains only a small number of coefficients and produces substantially lower Sharpe than ridge. This is not evidence that sparse methods are generally inferior; it shows that regularisation must match the structure of predictability.
+
+Task 3 carries the same lesson to unknown DGPs. A selects ridge and shows the strongest validation evidence; B selects heavy Lasso shrinkage in an extremely high-dimensional sample; C selects PCA-ridge, favouring dimension reduction plus shrinkage. Since B and C do not beat the zero predictor in validation $\Rpaper$, these choices are best viewed as conservative model selections under weak signal rather than strong claims about their true structures. Final hidden-test performance remains unknown until grading.
+
+Finally, Task 4 extends complexity control from parameter dimension to optimisation time. Around epoch 59, the network has not interpolated the training sample but achieves test $\Rpaper\approx0.175$ and paper Sharpe $\approx0.403$. By epoch 2000, training MSE is essentially zero, yet test $\Rpaper$ falls to $-0.069$ and Sharpe to $0.289$, while the complexity proxy rises from about 30 to 561. This qualitatively supports Montanari--Urbani's separation between an early feature-learning regime and a later overfitting regime. The practical financial implication is that the objective is not maximum in-sample fit: effective complexity must be controlled through shrinkage, sparsity when justified, dimension reduction, or early stopping so that additional capacity captures persistent predictive structure rather than sample-specific return noise.
+
+% =========================================================================== 7
+\section{Task 5 (video) and reproducibility}
+\textbf{Video:} \VideoLink\ (8--10 minutes). It follows the package: clean environment, \code{pip install -r requirements.txt}, \code{pytest}, run of the pipeline, and walk-through of (i) Task 1 key steps and learnings, (ii) Task 2 findings, (iii) Task 3 model choice and justification, (iv) Task 4 application, argument and takeaway. \todo{record video and check that the figures shown match those in this report.}\\[3pt]
+\textbf{Reproduce (from the repository root):}
+\begin{verbatim}
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+pytest -q                                           # 47 tests, ~10 s
+python3 -m src.task1_ridge --config configs/default.yaml        # ~2 min
+python3 -m src.task2_alternative --config configs/default.yaml  # ~17 min
+python3 -m src.task3_hidden_prediction \
+       --config configs/default.yaml --student-id ID
+python3 -m src.task4_nn_dynamics --config configs/default.yaml  # ~30 s
+\end{verbatim}
+All seeds are fixed (rerunning Task 1 reproduced the summary table with maximum difference $0$ on the same machine); paths are relative; the exact configuration and package versions of each run are saved in \code{outputs/logs/}.
+
+\section{Code cross-reference}
+\begin{table}[h]\centering\small
+\begin{tabular}{@{}p{5.6cm}p{5.3cm}p{4.2cm}@{}}\toprule
+\textbf{Figure / table} & \textbf{Function} & \textbf{Source table}\\\midrule
+Fig.~1a--d, Tab.~2 & \code{plotting.plot_metric_vs_cq} & \code{task1_summary.csv}\\
+Fig.~2 (zoom) & \code{plotting.plot_zoom} & \code{task1_summary.csv}\\
+Fig.~3a & \code{plotting.plot_ridgeless_vs_validated} & \code{task1_*summary.csv}\\
+Fig.~3b & \code{plotting.plot_best_z_envelope} & \code{task1_summary.csv}\\
+Fig.~4, Tab.~3 & \code{plotting.plot_ridge_vs_alternative} & \code{task2_summary.csv}\\
+Fig.~5 & \code{plotting.plot_metric_vs_cq(group_col="alpha")} & \code{task2_fixed_alpha_summary.csv}\\
+Fig.~6 & \code{plotting.plot_sparsity} & \code{task2_summary.csv}\\
+Fig.~7, Tab.~5 & \code{plotting.plot_training_dynamics} & \code{task4_training_curves.csv}\\
+Simulation, ridge sweep & \code{task1_ridge.evaluate_replication} & \code{task1_results.csv}\\
+Lasso/EN tuning & \code{task2_alternative.evaluate_cq} & \code{task2_results.csv}\\
+Task 3 pipeline & \code{task3_hidden_prediction.process_dataset} & \code{task3_validation_*.csv}\\
+Metrics, ridge SVD & \code{metrics.py}, \code{models.RidgeSVD} & ---\\\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Limitations summary}
+Finite-sample noise (s.e.\ $\approx0.0035$ on $\SR$; paired comparisons used where possible); no grid point exactly at $c_q=1$; the Task 1 $z$ grid is capped at 100; Lasso/EN convergence tolerance can matter at tiny $\alpha$; oracle (test-selected) curves are labelled as such; Task 3 selections are based only on internal validation and hidden-test performance is unknown; Task 4 uses a stylised teacher and pilot-tuned parameters; population (theory) curves are not overlaid.
+
+\begin{thebibliography}{9}\small
+\bibitem{kmz} B.~T.~Kelly, S.~Malamud, K.~Zhou (2024). The Virtue of Complexity in Return Prediction. \emph{Journal of Finance} 79(1), 459--503. DOI 10.1111/jofi.13298.
+\bibitem{mu} A.~Montanari, P.~Urbani (2025). Dynamical Decoupling of Generalization and Overfitting in Large Two-Layer Networks. \emph{Advances in Neural Information Processing Systems} 38; arXiv:2502.21269.
+\end{thebibliography}
+
+% =========================================================================== appendix
+\appendix
+\section{Short derivations}\label{app:proofs}
+\textbf{(a) $\Rpaper$ identity.} $\E[(R-\widehat R)^2]=\E[R^2]-2\E[\widehat R R]+\E[\widehat R^2]$, hence $1-\E[(R-\widehat R)^2]/\E[R^2]=(2\E[\widehat RR]-\E[\widehat R^2])/\E[R^2]$.
+\textbf{(b) Scale invariance of $\SR$.} If $\widehat R\to\lambda\widehat R$ ($\lambda>0$), then $R^\pi\to\lambda R^\pi$, so numerator and $\sqrt{\E[(R^\pi)^2]}$ both scale by $\lambda$ and $\SR$ is unchanged, while $E[R^\pi]$ scales by $\lambda$ and $\Rpaper=1-\E[(R-\lambda\widehat R)^2]/\E[R^2]$ changes non-linearly.
+\textbf{(c) Large-$z$ limit.} From \eqref{eq:ridge}, $\bh(z)=\frac1{z\Ttr}X^\top y\,(1+O(\sigma_1^2/(z\Ttr)))$ as $z\to\infty$, so the forecast direction tends to that of $X^\top y$ and the Sharpe ratio converges to a finite limit.
+\textbf{(d) Ridgeless solution.} For $P_1>\Ttr$ and full row rank, $\lim_{z\to0^+}\bh(z)=X^\top(XX^\top)^{-1}y$, the minimum $\ell_2$-norm interpolator; for $P_1<\Ttr$ and full column rank it is OLS. Both equal $V\Sigma^{+}U^\top y$ computed with the SVD pseudo-inverse.
+
+\end{document}
