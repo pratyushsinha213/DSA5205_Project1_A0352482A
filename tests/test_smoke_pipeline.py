@@ -1,4 +1,6 @@
 """End-to-end smoke test on the tiny config: every stage runs and writes its artefacts."""
+from unicodedata import name
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -17,8 +19,8 @@ def smoke_run(tmp_path_factory):
         cols = [f"feature{i + 1}" for i in range(P)]
         tr = pd.DataFrame(X[:T], columns=cols); tr.insert(0, "t", range(T)); tr["return"] = y[:T]
         te = pd.DataFrame(X[T:], columns=cols); te.insert(0, "t", range(T, T + 30))
-        tr.to_csv(raw / f"train_{name}.csv", index=False)
-        te[["t"] + cols[::-1]].to_csv(raw / f"test_{name}.csv", index=False)     # shuffled column order
+        tr.to_csv(raw / f"pair{name}_train.csv", index=False)
+        te[["t"] + cols[::-1]].to_csv(raw / f"pair{name}_test_features.csv", index=False)     # shuffled column order
     run_all.main(["--config", "configs/smoke.yaml", "--output-dir", str(out), "--raw-dir", str(raw),
                   "--student-id", "TESTID"])
     return out

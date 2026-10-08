@@ -89,8 +89,8 @@ def test_load_from_csv_files_preserves_raw_t_strings(tmp_path):
     tr, te = make_frames()
     tr["t"] = [f"2020-01-{i + 1:02d}" for i in range(len(tr))]
     te["t"] = [f"2020-02-{i + 1:02d}" for i in range(len(te))]
-    tr.to_csv(tmp_path / "train_A.csv", index=False)
-    te.to_csv(tmp_path / "test_A.csv", index=False)
+    tr.to_csv(tmp_path / "pairA_train.csv", index=False)
+    te.to_csv(tmp_path / "pairA_test_features.csv", index=False)
     d = load_task_data(tmp_path, "A")
     assert d.t_test == te["t"].tolist()
     with pytest.raises(FileNotFoundError):

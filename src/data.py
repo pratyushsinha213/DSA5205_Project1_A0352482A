@@ -90,7 +90,7 @@ def align_train_test(train: pd.DataFrame, test: pd.DataFrame, name: str = "datas
 
 def load_task_data(raw_dir: Path, name: str) -> TaskData:
     """Load ``train_<name>.csv`` / ``test_<name>.csv`` from ``raw_dir``."""
-    tr_path, te_path = Path(raw_dir) / f"train_{name}.csv", Path(raw_dir) / f"test_{name}.csv"
+    tr_path, te_path = Path(raw_dir) / f"pair{name.upper()}_train.csv", Path(raw_dir) / f"pair{name.upper()}_test_features.csv"
     for p in (tr_path, te_path):
         if not p.exists():
             raise FileNotFoundError(p)
