@@ -9,8 +9,8 @@ T = ["10", "11", "12", "13"]
 
 
 def test_written_file_has_exact_schema(tmp_path):
-    path = prediction_path(tmp_path, "A0123456X", "A")
-    assert path.name == "A0123456X_predictions_A.csv"
+    path = prediction_path(tmp_path, "A0352482A", "A")
+    assert path.name == "A0352482A_predictions_A.csv"
     write_predictions(path, T, np.array([0.1, -0.2, 0.0, 1.5]), expected_t=T)
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "t,yhat" and len(lines) == len(T) + 1
